@@ -114,7 +114,9 @@ def _load_registry() -> dict:
 
 MODEL_REGISTRY = _load_registry()
 
-app = FastAPI(title="agy-gateway")
+__version__ = "0.5.0"
+
+app = FastAPI(title="agy-gateway", version=__version__)
 
 
 class ChatMessage(BaseModel):
@@ -422,4 +424,4 @@ async def approve(approval_id: str, body: ApprovalRequest):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "models_loaded": len(MODEL_REGISTRY)}
+    return {"status": "ok", "version": __version__, "models_loaded": len(MODEL_REGISTRY)}
