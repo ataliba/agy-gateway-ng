@@ -110,9 +110,16 @@ LXC Debian 13 e instala tudo nativo (venv + systemd, sem Docker, em
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/ataliba/agy-gateway-ng/main/ct/agy-gateway-ng.sh)"
 ```
 
-Customiza via env var antes do comando (`CTID`, `HOSTNAME`, `STORAGE`, `DISK_GB`,
-`CORES`, `MEMORY_MB`, `NET_CONFIG`, `GATEWAY_PORT` — ver cabeçalho de
-`ct/agy-gateway-ng.sh`). No fim, falta só logar o `agy` dentro do container:
+Customiza via env var antes do comando — mesma convenção do
+community-scripts/ProxmoxVE (`var_cpu`, `var_ram`, `var_disk`, `var_version`,
+`var_unprivileged`), mais `CTID`, `HOSTNAME`, `STORAGE`, `NET_CONFIG`,
+`GATEWAY_PORT` (ver cabeçalho de `ct/agy-gateway-ng.sh`):
+
+```bash
+var_cpu=2 var_ram=1024 var_version=13 bash -c "$(curl -fsSL https://raw.githubusercontent.com/ataliba/agy-gateway-ng/main/ct/agy-gateway-ng.sh)"
+```
+
+No fim, falta só logar o `agy` dentro do container:
 
 ```bash
 pct exec <CTID> -- agy
