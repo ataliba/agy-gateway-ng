@@ -100,6 +100,24 @@ logar de novo a não ser que o volume `gemini_data` seja apagado.
 container (`/root/.gemini/antigravity-cli/brain`) — não precisa mexer nessa
 variável pra rodar via Docker.
 
+### LXC no Proxmox VE
+
+Instalador standalone (não depende do framework community-scripts) que cria um
+LXC Debian 12 e instala tudo nativo (venv + systemd, sem Docker). Roda no shell
+do **host** Proxmox:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/ataliba/agy-gateway-ng/main/ct/agy-gateway-ng.sh)"
+```
+
+Customiza via env var antes do comando (`CTID`, `HOSTNAME`, `STORAGE`, `DISK_GB`,
+`CORES`, `MEMORY_MB`, `NET_CONFIG`, `GATEWAY_PORT` — ver cabeçalho de
+`ct/agy-gateway-ng.sh`). No fim, falta só logar o `agy` dentro do container:
+
+```bash
+pct exec <CTID> -- agy
+```
+
 ## Testando
 
 ```bash
