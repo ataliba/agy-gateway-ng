@@ -103,8 +103,8 @@ variável pra rodar via Docker.
 ### LXC no Proxmox VE
 
 Instalador standalone (não depende do framework community-scripts) que cria um
-LXC Debian 12 e instala tudo nativo (venv + systemd, sem Docker). Roda no shell
-do **host** Proxmox:
+LXC Debian 13 e instala tudo nativo (venv + systemd, sem Docker, em
+`/opt/api-gateway-ng`). Roda no shell do **host** Proxmox:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/ataliba/agy-gateway-ng/main/ct/agy-gateway-ng.sh)"

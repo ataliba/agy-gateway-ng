@@ -25,13 +25,13 @@ GATEWAY_PORT="${GATEWAY_PORT:-8000}"
 command -v pct >/dev/null 2>&1 || { echo "Rode isso no host Proxmox VE (comando 'pct' não encontrado)." >&2; exit 1; }
 [[ $EUID -eq 0 ]] || { echo "Precisa rodar como root." >&2; exit 1; }
 
-echo "==> Resolvendo template Debian 12 mais recente"
-TEMPLATE=$(pveam available --section system 2>/dev/null | awk '/debian-12-standard/{print $2}' | sort -V | tail -1)
+echo "==> Resolvendo template Debian 13 mais recente"
+TEMPLATE=$(pveam available --section system 2>/dev/null | awk '/debian-13-standard/{print $2}' | sort -V | tail -1)
 if [[ -z "${TEMPLATE}" ]]; then
   pveam update
-  TEMPLATE=$(pveam available --section system | awk '/debian-12-standard/{print $2}' | sort -V | tail -1)
+  TEMPLATE=$(pveam available --section system | awk '/debian-13-standard/{print $2}' | sort -V | tail -1)
 fi
-[[ -n "${TEMPLATE}" ]] || { echo "Não achei template debian-12-standard em 'pveam available'." >&2; exit 1; }
+[[ -n "${TEMPLATE}" ]] || { echo "Não achei template debian-13-standard em 'pveam available'." >&2; exit 1; }
 
 if ! pveam list "${TEMPLATE_STORAGE}" 2>/dev/null | grep -q "${TEMPLATE}"; then
   echo "==> Baixando template ${TEMPLATE}"
@@ -68,12 +68,12 @@ echo "==> Instalando o CLI agy (instalador oficial)"
 pct exec "${CTID}" -- bash -c 'curl -fsSL https://antigravity.google/cli/install.sh | bash'
 
 echo "==> Clonando ${REPO_URL}"
-pct exec "${CTID}" -- bash -c "git clone --depth 1 '${REPO_URL}' /opt/agy-gateway-ng"
+pct exec "${CTID}" -- bash -c "git clone --depth 1 '${REPO_URL}' /opt/api-gateway-ng"
 
 echo "==> Criando venv e instalando dependências Python"
 pct exec "${CTID}" -- bash -c "
   set -e
-  cd /opt/agy-gateway-ng
+  cd /opt/api-gateway-ng
   python3 -m venv .venv
   .venv/bin/pip install --no-cache-dir -r requirements.txt
   cp .env.example .env
@@ -89,10 +89,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/agy-gateway-ng
-EnvironmentFile=-/opt/agy-gateway-ng/.env
+WorkingDirectory=/opt/api-gateway-ng
+EnvironmentFile=-/opt/api-gateway-ng/.env
 Environment=HOME=/root
-ExecStart=/opt/agy-gateway-ng/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${GATEWAY_PORT}
+ExecStart=/opt/api-gateway-ng/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${GATEWAY_PORT}
 Restart=on-failure
 RestartSec=2
 
@@ -114,7 +114,7 @@ cat <<INFO
    pct exec ${CTID} -- agy
  (mostra uma URL — abra num navegador fora do container pra logar)
 
- Config em /opt/agy-gateway-ng/.env dentro do container (ex: AGY_API_KEY
+ Config em /opt/api-gateway-ng/.env dentro do container (ex: AGY_API_KEY
  pra exigir auth) — depois de editar: pct exec ${CTID} -- systemctl restart agy-gateway
 ===================================================================
 INFO
