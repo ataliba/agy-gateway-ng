@@ -1,0 +1,14 @@
+[Unit]
+Description=agy-gateway (OpenAI-compatible local proxy pro agy CLI)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Developing/agy-gateway-ng
+EnvironmentFile=-%h/Developing/agy-gateway-ng/.env
+ExecStart=%h/Developing/agy-gateway-ng/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
