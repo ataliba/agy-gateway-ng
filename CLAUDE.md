@@ -18,6 +18,11 @@ HTTP). A heurística de detecção de pedido de permissão aqui foi portada de l
 - `.env` / `.env.example` — configuração via variáveis de ambiente (ver tabela abaixo).
 - `agy-gateway.service` — unit systemd (`--user`) pra rodar via `uvicorn`.
 - `test_gateway.py` + `pytest.ini` (`asyncio_mode = auto`) + `requirements-dev.txt`.
+- `Dockerfile` / `docker-compose.yml` — imagem instala o `agy` via instalador
+  oficial (`curl -fsSL https://antigravity.google/cli/install.sh | bash`), vai
+  pra `/root/.local/bin/agy` (no `PATH`). Login/conversas ficam no volume nomeado
+  `gemini_data:/root/.gemini` — isolado do host, sobrevive a restart/rebuild, só
+  some com `down -v`. Login inicial: `docker compose exec agy-gateway agy`.
 
 ## Invariantes importantes (não quebrar sem entender por quê)
 

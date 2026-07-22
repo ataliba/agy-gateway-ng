@@ -7,13 +7,15 @@ services:
     env_file:
       - .env
     environment:
-      # o agy roda autenticado no host (login Google já feito) — dentro do
-      # container ele só existe se o binário e o diretório ~/.gemini forem
-      # montados dos volumes abaixo. Esses dois valores têm que apontar pro
-      # caminho DENTRO do container, por isso sobrescrevem o que vier do .env.
-      AGY_BIN: /usr/local/bin/agy
+      # o binário já vem instalado na imagem, em /root/.local/bin/agy (no PATH).
+      # BRAIN_DIR aponta pro caminho DENTRO do container, por isso sobrescreve
+      # o que vier do .env.
       BRAIN_DIR: /root/.gemini/antigravity-cli/brain
     volumes:
-      - ${AGY_BIN_PATH:-/home/ataliba/.local/bin/agy}:/usr/local/bin/agy:ro
-      - ${HOME}/.gemini:/root/.gemini
+      # guarda login (OAuth) + conversas do agy — sobrevive a restart/rebuild,
+      # some só se o volume for removido explicitamente (docker compose down -v).
+      - gemini_data:/root/.gemini
     restart: unless-stopped
+
+volumes:
+  gemini_data:

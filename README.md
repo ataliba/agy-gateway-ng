@@ -76,21 +76,29 @@ systemctl --user enable --now agy-gateway
 
 ### Docker
 
-A imagem só empacota o gateway (Python) — o `agy` continua rodando autenticado no
-host (login Google já feito por lá), então o binário e a pasta `~/.gemini`
-(credenciais + conversas) entram como volumes montados, não vão pra dentro da
-imagem:
+A imagem já vem com o Antigravity CLI instalado (instalador oficial, dentro do
+`Dockerfile`). Login e conversas ficam num volume próprio (`gemini_data`),
+isolado do host — sobrevive a restart/rebuild, só some com
+`docker compose down -v`.
 
 ```bash
 cp .env.example .env
-AGY_BIN_PATH=$(which agy) docker compose up -d --build
+docker compose up -d --build
 ```
 
-`AGY_BIN_PATH` é opcional — o `docker-compose.yml` já assume
-`~/.local/bin/agy` como default. `AGY_BIN` e `BRAIN_DIR` do `.env` são
-sobrescritos pelo compose pros caminhos correspondentes dentro do container
-(`/usr/local/bin/agy` e `/root/.gemini/antigravity-cli/brain`) — não precisa
-mexer nessas duas variáveis pra rodar via Docker.
+Na primeira vez, entre no container e faça o login do Google (o `agy` mostra uma
+URL pra abrir num navegador):
+
+```bash
+docker compose exec agy-gateway agy
+```
+
+Depois disso o gateway já usa essa sessão autenticada normalmente — não precisa
+logar de novo a não ser que o volume `gemini_data` seja apagado.
+
+`BRAIN_DIR` do `.env` é sobrescrito pelo compose pro caminho de dentro do
+container (`/root/.gemini/antigravity-cli/brain`) — não precisa mexer nessa
+variável pra rodar via Docker.
 
 ## Testando
 
