@@ -47,9 +47,16 @@ pct create "${CTID}" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
   --rootfs "${STORAGE}:${DISK_GB}" \
   --net0 "${NET_CONFIG}" \
   --unprivileged 1 \
+  --features nesting=1 \
   --onboot 1
 
 pct start "${CTID}"
+
+# bug conhecido do template debian-13-standard: / sai com dono nobody:nogroup,
+# o que deixa o systemd em estado degradado (mesmo fix do community-scripts
+# em misc/install.func).
+sleep 2
+pct exec "${CTID}" -- chown root:root / || true
 
 echo "==> Esperando rede do container"
 for _ in $(seq 1 30); do
