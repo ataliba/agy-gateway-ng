@@ -74,6 +74,24 @@ systemctl --user daemon-reload
 systemctl --user enable --now agy-gateway
 ```
 
+### Docker
+
+A imagem só empacota o gateway (Python) — o `agy` continua rodando autenticado no
+host (login Google já feito por lá), então o binário e a pasta `~/.gemini`
+(credenciais + conversas) entram como volumes montados, não vão pra dentro da
+imagem:
+
+```bash
+cp .env.example .env
+AGY_BIN_PATH=$(which agy) docker compose up -d --build
+```
+
+`AGY_BIN_PATH` é opcional — o `docker-compose.yml` já assume
+`~/.local/bin/agy` como default. `AGY_BIN` e `BRAIN_DIR` do `.env` são
+sobrescritos pelo compose pros caminhos correspondentes dentro do container
+(`/usr/local/bin/agy` e `/root/.gemini/antigravity-cli/brain`) — não precisa
+mexer nessas duas variáveis pra rodar via Docker.
+
 ## Testando
 
 ```bash

@@ -1,0 +1,19 @@
+services:
+  agy-gateway:
+    build: .
+    container_name: agy-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # o agy roda autenticado no host (login Google já feito) — dentro do
+      # container ele só existe se o binário e o diretório ~/.gemini forem
+      # montados dos volumes abaixo. Esses dois valores têm que apontar pro
+      # caminho DENTRO do container, por isso sobrescrevem o que vier do .env.
+      AGY_BIN: /usr/local/bin/agy
+      BRAIN_DIR: /root/.gemini/antigravity-cli/brain
+    volumes:
+      - ${AGY_BIN_PATH:-/home/ataliba/.local/bin/agy}:/usr/local/bin/agy:ro
+      - ${HOME}/.gemini:/root/.gemini
+    restart: unless-stopped
