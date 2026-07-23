@@ -4,12 +4,17 @@ services:
     container_name: agy-gateway
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
-      # o binário já vem instalado na imagem, em /root/.local/bin/agy (no PATH).
-      # BRAIN_DIR aponta pro caminho DENTRO do container, por isso sobrescreve
-      # o que vier do .env.
+      # sem env_file: Portainer via agent não envia .env junto do stack, só o
+      # YAML. Preencher os valores nas "Environment variables" do stack no
+      # Portainer (ele substitui ${VAR} na hora do parse, sem precisar de
+      # arquivo no disco do agente).
+      AGY_BIN: ${AGY_BIN:-agy}
+      MODELS_FILE: ${MODELS_FILE:-models.yaml}
+      AGY_TIMEOUT: ${AGY_TIMEOUT:-300}
+      AGY_MAX_CONCURRENT: ${AGY_MAX_CONCURRENT:-1}
+      AGY_API_KEY: ${AGY_API_KEY:-}
+      # caminho DENTRO do container — sempre fixo, não vem de fora.
       BRAIN_DIR: /root/.gemini/antigravity-cli/brain
     volumes:
       # guarda login (OAuth) + conversas do agy — sobrevive a restart/rebuild,

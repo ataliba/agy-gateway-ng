@@ -94,6 +94,12 @@ cp .env.example .env
 docker compose -f docker-compose.prod.yml up -d
 ```
 
+`docker-compose.prod.yml` não usa `env_file` — as vars vêm de `${VAR}` com
+default embutido. É de propósito: deploy via **Portainer com agent** não envia
+o `.env` junto do stack, só o YAML, então `env_file: .env` falha calado. No
+Portainer, preencha as vars em "Environment variables" na tela do stack; via
+`docker compose` na CLI, exporte-as no shell ou use `--env-file .env`.
+
 Na primeira vez, entre no container e faça o login do Google (o `agy` mostra uma
 URL pra abrir num navegador):
 
