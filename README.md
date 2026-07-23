@@ -86,6 +86,14 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+Pra usar a imagem já publicada no Docker Hub (`cybernetus/agy-gateway-ng`), sem
+build local:
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.prod.yml up -d
+```
+
 Na primeira vez, entre no container e faça o login do Google (o `agy` mostra uma
 URL pra abrir num navegador):
 

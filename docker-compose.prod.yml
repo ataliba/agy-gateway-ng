@@ -1,0 +1,21 @@
+services:
+  agy-gateway:
+    image: cybernetus/agy-gateway-ng:0.5.0
+    container_name: agy-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # o binário já vem instalado na imagem, em /root/.local/bin/agy (no PATH).
+      # BRAIN_DIR aponta pro caminho DENTRO do container, por isso sobrescreve
+      # o que vier do .env.
+      BRAIN_DIR: /root/.gemini/antigravity-cli/brain
+    volumes:
+      # guarda login (OAuth) + conversas do agy — sobrevive a restart/rebuild,
+      # some só se o volume for removido explicitamente (docker compose down -v).
+      - gemini_data:/root/.gemini
+    restart: unless-stopped
+
+volumes:
+  gemini_data:
