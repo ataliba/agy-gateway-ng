@@ -1,6 +1,6 @@
 services:
   agy-gateway:
-    image: cybernetus/agy-gateway-ng:0.5.0
+    image: cybernetus/agy-gateway-ng:0.5.1
     container_name: agy-gateway
     ports:
       - "8000:8000"

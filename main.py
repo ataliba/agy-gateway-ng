@@ -114,7 +114,7 @@ def _load_registry() -> dict:
 
 MODEL_REGISTRY = _load_registry()
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 app = FastAPI(title="agy-gateway", version=__version__)
 
@@ -196,20 +196,28 @@ async def _run_agy(
     known_ids = _list_conversation_ids() if conversation_id is None else set()
 
     await _agy_semaphore.acquire()
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
+    proc = None
     try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         output, cmd = await _drain_until_prompt_or_exit(proc, "")
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
         raise HTTPException(504, f"agy excedeu timeout de {PRINT_TIMEOUT}s (comando: {' '.join(args)})")
+    except Exception:
+        # qualquer falha aqui (ex: agy sumiu do PATH, pipe quebrado) não pode
+        # vazar o semáforo — senão toda request futura trava pra sempre.
+        if proc is not None:
+            proc.kill()
+            await proc.wait()
+        _agy_semaphore.release()
+        raise
 
     if cmd:
         approval_id = _register_pending(proc, cmd, conversation_id, known_ids, output, "sync", user, model_name)
@@ -221,16 +229,21 @@ async def _run_agy(
 async def _resume_sync(pending: PendingApproval, approved: bool) -> dict:
     """Continua um processo agy sync depois que /v1/approvals/{id} decidiu."""
     proc = pending.proc
-    proc.stdin.write(b"y\n" if approved else b"n\n")
-    await proc.stdin.drain()
-
     try:
+        proc.stdin.write(b"y\n" if approved else b"n\n")
+        await proc.stdin.drain()
         output, cmd = await _drain_until_prompt_or_exit(proc, pending.output_so_far)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
         raise HTTPException(504, f"agy excedeu timeout de {PRINT_TIMEOUT}s")
+    except Exception:
+        # stdin quebrado (processo já morreu) não pode vazar o semáforo.
+        proc.kill()
+        await proc.wait()
+        _agy_semaphore.release()
+        raise
 
     if cmd:
         approval_id = _register_pending(
@@ -274,16 +287,16 @@ async def _stream_chat_completion(req: ChatRequest, real_model: str, prompt: str
     known_ids = _list_conversation_ids() if conversation_id is None else set()
 
     await _agy_semaphore.acquire()
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
     output_so_far = ""
     tail = ""
+    proc = None
     try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         while True:
             chunk = await asyncio.wait_for(proc.stdout.read(1024), timeout=PRINT_TIMEOUT)
             if not chunk:
@@ -326,6 +339,16 @@ async def _stream_chat_completion(req: ChatRequest, real_model: str, prompt: str
         await proc.wait()
         _agy_semaphore.release()
         yield _sse({"content": f"\n[erro] agy excedeu timeout de {PRINT_TIMEOUT}s"}, finish_reason="stop")
+        yield "data: [DONE]\n\n"
+        return
+    except Exception as exc:
+        # qualquer falha aqui (pipe quebrado, agy sumiu, etc) não pode vazar
+        # o semáforo — senão todo POST /v1/chat/completions futuro trava.
+        if proc is not None:
+            proc.kill()
+            await proc.wait()
+        _agy_semaphore.release()
+        yield _sse({"content": f"\n[erro] {exc}"}, finish_reason="stop")
         yield "data: [DONE]\n\n"
         return
 
