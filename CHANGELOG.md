@@ -2,6 +2,18 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [0.5.2] - 2026-08-09
+
+### Fixed
+
+- Workflow `Pylint` (`.github/workflows/pylint.yml`) quebrava em todo push:
+  não instalava `requirements.txt`/`requirements-dev.txt`, gerando
+  `import-error` em `yaml`/`fastapi`/`pydantic`, e travava no exit-code de
+  score baixo. Adicionado `.pylintrc` alinhado às convenções do projeto
+  (sem docstrings obrigatórias, sem limite artificial de args/atributos num
+  arquivo único de propósito) e `main.py` reformatado — nota 10/10, sem
+  mudança de comportamento.
+
 ## [0.5.1] - 2026-08-09
 
 ### Fixed
@@ -35,5 +47,6 @@ Primeiro release.
 - Bugs conhecidos do template Debian 13 em LXC no instalador Proxmox.
 - Diretório `/opt/api-gateway-ng` e template Debian 13 no instalador LXC.
 
+[0.5.2]: https://github.com/ataliba/agy-gateway-ng/releases/tag/v0.5.2
 [0.5.1]: https://github.com/ataliba/agy-gateway-ng/releases/tag/v0.5.1
 [0.5.0]: https://github.com/ataliba/agy-gateway-ng/releases/tag/v0.5.0

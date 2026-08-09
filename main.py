@@ -4,8 +4,9 @@ import uuid
 import json
 import asyncio
 import os
-import yaml
 from dataclasses import dataclass, field
+
+import yaml
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -66,7 +67,9 @@ def _register_pending(
     proc, command, conversation_id, known_ids, output_so_far, mode, user=None, model_name=None
 ) -> str:
     approval_id = uuid.uuid4().hex
-    pending = PendingApproval(proc, command, conversation_id, known_ids, output_so_far, mode, user, model_name)
+    pending = PendingApproval(
+        proc, command, conversation_id, known_ids, output_so_far, mode, user, model_name
+    )
     _pending_approvals[approval_id] = pending
     if mode == "sync":
         # no modo stream quem cuida do timeout é o próprio generator (segue esperando no
@@ -108,13 +111,13 @@ def _list_conversation_ids() -> set[str]:
 
 
 def _load_registry() -> dict:
-    with open(MODELS_FILE) as f:
+    with open(MODELS_FILE, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
 MODEL_REGISTRY = _load_registry()
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 app = FastAPI(title="agy-gateway", version=__version__)
 
@@ -153,7 +156,9 @@ async def _iter_agy_stdout(proc: asyncio.subprocess.Process):
         yield _strip_ansi(chunk.decode(errors="ignore"))
 
 
-async def _drain_until_prompt_or_exit(proc: asyncio.subprocess.Process, output_so_far: str) -> tuple[str, str | None]:
+async def _drain_until_prompt_or_exit(
+    proc: asyncio.subprocess.Process, output_so_far: str
+) -> tuple[str, str | None]:
     """Acumula stdout até o processo sair ou aparecer um novo pedido de permissão.
     Retorna (saída_acumulada, comando_do_pedido_ou_None)."""
     output = output_so_far
@@ -167,7 +172,9 @@ async def _drain_until_prompt_or_exit(proc: asyncio.subprocess.Process, output_s
     return output, None
 
 
-async def _finalize_sync(proc: asyncio.subprocess.Process, output: str, conversation_id: str | None, known_ids: set[str]) -> dict:
+async def _finalize_sync(
+    proc: asyncio.subprocess.Process, output: str, conversation_id: str | None, known_ids: set[str]
+) -> dict:
     stderr = (await proc.stderr.read()).decode()
     await proc.wait()
     _agy_semaphore.release()
@@ -185,7 +192,11 @@ async def _finalize_sync(proc: asyncio.subprocess.Process, output: str, conversa
 
 
 async def _run_agy(
-    prompt: str, real_model: str, conversation_id: str | None = None, user: str | None = None, model_name: str | None = None
+    prompt: str,
+    real_model: str,
+    conversation_id: str | None = None,
+    user: str | None = None,
+    model_name: str | None = None,
 ) -> dict:
     """Roda agy uma vez. Retorna:
       {"status": "ok", "output": str, "new_conversation_id": str|None}
@@ -205,11 +216,13 @@ async def _run_agy(
             stderr=asyncio.subprocess.PIPE,
         )
         output, cmd = await _drain_until_prompt_or_exit(proc, "")
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
-        raise HTTPException(504, f"agy excedeu timeout de {PRINT_TIMEOUT}s (comando: {' '.join(args)})")
+        raise HTTPException(
+            504, f"agy excedeu timeout de {PRINT_TIMEOUT}s (comando: {' '.join(args)})"
+        ) from exc
     except Exception:
         # qualquer falha aqui (ex: agy sumiu do PATH, pipe quebrado) não pode
         # vazar o semáforo — senão toda request futura trava pra sempre.
@@ -220,7 +233,9 @@ async def _run_agy(
         raise
 
     if cmd:
-        approval_id = _register_pending(proc, cmd, conversation_id, known_ids, output, "sync", user, model_name)
+        approval_id = _register_pending(
+            proc, cmd, conversation_id, known_ids, output, "sync", user, model_name
+        )
         return {"status": "permission_required", "approval_id": approval_id, "command": cmd}
 
     return await _finalize_sync(proc, output, conversation_id, known_ids)
@@ -233,11 +248,11 @@ async def _resume_sync(pending: PendingApproval, approved: bool) -> dict:
         proc.stdin.write(b"y\n" if approved else b"n\n")
         await proc.stdin.drain()
         output, cmd = await _drain_until_prompt_or_exit(proc, pending.output_so_far)
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
-        raise HTTPException(504, f"agy excedeu timeout de {PRINT_TIMEOUT}s")
+        raise HTTPException(504, f"agy excedeu timeout de {PRINT_TIMEOUT}s") from exc
     except Exception:
         # stdin quebrado (processo já morreu) não pode vazar o semáforo.
         proc.kill()
@@ -247,7 +262,8 @@ async def _resume_sync(pending: PendingApproval, approved: bool) -> dict:
 
     if cmd:
         approval_id = _register_pending(
-            proc, cmd, pending.conversation_id, pending.known_ids, output, "sync", pending.user, pending.model_name
+            proc, cmd, pending.conversation_id, pending.known_ids, output,
+            "sync", pending.user, pending.model_name,
         )
         return {"status": "permission_required", "approval_id": approval_id, "command": cmd}
 
@@ -265,7 +281,9 @@ async def list_models():
     }
 
 
-async def _stream_chat_completion(req: ChatRequest, real_model: str, prompt: str, conversation_id: str | None):
+async def _stream_chat_completion(
+    req: ChatRequest, real_model: str, prompt: str, conversation_id: str | None
+):
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
 
@@ -322,7 +340,9 @@ async def _stream_chat_completion(req: ChatRequest, real_model: str, prompt: str
                     await proc.wait()
                     _agy_semaphore.release()
                     _pending_approvals.pop(approval_id, None)
-                    yield _sse({"content": "\n[erro] tempo esgotado esperando aprovação"}, finish_reason="stop")
+                    yield _sse(
+                        {"content": "\n[erro] tempo esgotado esperando aprovação"}, finish_reason="stop"
+                    )
                     yield "data: [DONE]\n\n"
                     return
 
@@ -365,7 +385,7 @@ async def _stream_chat_completion(req: ChatRequest, real_model: str, prompt: str
     if conversation_id is None and req.user:
         new_ids = _list_conversation_ids() - known_ids
         if new_ids:
-            _user_conversations[req.user] = next(iter(new_ids))
+            _user_conversations[req.user] = next(iter(new_ids), None)
 
     yield _sse({}, finish_reason="stop")
     yield "data: [DONE]\n\n"
@@ -394,7 +414,11 @@ async def chat_completions(req: ChatRequest):
         )
 
     result = await _run_agy(
-        prompt, real_model=config["model"], conversation_id=conversation_id, user=req.user, model_name=req.model
+        prompt,
+        real_model=config["model"],
+        conversation_id=conversation_id,
+        user=req.user,
+        model_name=req.model,
     )
     return _chat_response_or_pending(req.model, req.user, result)
 
@@ -409,7 +433,10 @@ def _chat_response_or_pending(model: str, user: str | None, result: dict):
             "status": "permission_required",
             "approval_id": result["approval_id"],
             "command": result["command"],
-            "hint": f"POST /v1/approvals/{result['approval_id']} com {{\"approved\": true|false}} pra continuar",
+            "hint": (
+                f"POST /v1/approvals/{result['approval_id']} "
+                'com {"approved": true|false} pra continuar'
+            ),
         })
 
     if user and result["new_conversation_id"]:
@@ -439,7 +466,10 @@ async def approve(approval_id: str, body: ApprovalRequest):
     pending.decision_event.set()
 
     if pending.mode == "stream":
-        return {"status": "ok", "note": "resposta registrada — acompanhe o stream original de /v1/chat/completions"}
+        return {
+            "status": "ok",
+            "note": "resposta registrada — acompanhe o stream original de /v1/chat/completions",
+        }
 
     result = await _resume_sync(pending, body.approved)
     return _chat_response_or_pending(pending.model_name, pending.user, result)

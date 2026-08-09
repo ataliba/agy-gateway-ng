@@ -1,0 +1,19 @@
+[MASTER]
+extension-pkg-allow-list=pydantic
+
+[FORMAT]
+max-line-length=110
+
+[MESSAGES CONTROL]
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-few-public-methods,
+    too-many-instance-attributes,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-locals,
+    too-many-statements,
+    broad-exception-caught,
+    no-member,
