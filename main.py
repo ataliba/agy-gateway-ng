@@ -20,6 +20,7 @@ BRAIN_DIR = os.getenv(
 )
 AGY_MAX_CONCURRENT = int(os.getenv("AGY_MAX_CONCURRENT", "1"))
 API_KEY = os.getenv("AGY_API_KEY", "").strip()
+SKIP_PERMISSIONS = os.getenv("AGY_SKIP_PERMISSIONS", "false").lower() == "true"
 
 ANSI = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
@@ -136,6 +137,8 @@ class ChatRequest(BaseModel):
 
 def _build_args(prompt: str, real_model: str, conversation_id: str | None = None) -> list[str]:
     args = [AGY_BIN, "--model", real_model]
+    if SKIP_PERMISSIONS:
+        args.append("--dangerously-skip-permissions")
     if conversation_id:
         args += ["--conversation", conversation_id]
     elif CONTINUE_CONVERSATION:

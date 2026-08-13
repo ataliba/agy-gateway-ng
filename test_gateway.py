@@ -25,6 +25,15 @@ def test_no_conversation_id_falls_back_to_continue():
     assert "--continue" in args
     assert "--conversation" not in args
 
+def test_skip_permissions_off_by_default():
+    args = _build_args("oi", "gemini-3.5-flash-low")
+    assert "--dangerously-skip-permissions" not in args
+
+def test_skip_permissions_flag_added_when_enabled(monkeypatch):
+    monkeypatch.setattr(main, "SKIP_PERMISSIONS", True)
+    args = _build_args("oi", "gemini-3.5-flash-low")
+    assert "--dangerously-skip-permissions" in args
+
 @pytest.mark.asyncio
 async def test_require_api_key_passes_when_unset(monkeypatch):
     monkeypatch.setattr(main, "API_KEY", "")

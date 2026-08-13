@@ -74,6 +74,7 @@ Quando o agy pede aprovação no meio da execução, o gateway não trava a requ
 | `BRAIN_DIR` | `~/.gemini/antigravity-cli/brain` | onde o agy guarda conversas |
 | `AGY_MAX_CONCURRENT` | `1` | tamanho do semáforo — manter em 1 a menos que confirme que o agy aguenta concorrência |
 | `AGY_API_KEY` | (vazio) | se setado, exige `Authorization: Bearer <valor>` em `/v1/*` (exceto `/health`) |
+| `AGY_SKIP_PERMISSIONS` | `false` | se `true`, passa `--dangerously-skip-permissions` pro agy — pula o fluxo de aprovação (item 4) inteiro, sem depender da heurística de detecção de prompt |
 
 ## Endpoints
 
