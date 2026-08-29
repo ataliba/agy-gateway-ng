@@ -2,6 +2,27 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [0.6.1] - 2026-08-29
+
+### Fixed
+
+- `agy` podia sair com `returncode 0` e stdout vazio (visto sob uso alto,
+  provável rate-limit/quota do modelo engolido silenciosamente) e o gateway
+  devolvia `200` com `content` vazio sem log nenhum — cliente só via "model
+  returned empty response" sem pista da causa. Agora loga o `stderr` do
+  processo e retorna `502` (modo sync) ou chunk de erro (streaming) em vez de
+  completion vazio mudo (`main.py`: `_finalize_sync`,
+  `_stream_chat_completion`). Projeto ganhou logging (`logger`), antes
+  inexistente.
+
+## [0.6.0] - 2026-08-13
+
+### Added
+
+- Variável `AGY_SKIP_PERMISSIONS` (default `false`): quando `true`, passa
+  `--dangerously-skip-permissions` pro `agy`, pulando o fluxo de aprovação
+  inteiro em vez de depender da heurística de detecção de prompt no stdout.
+
 ## [0.5.2] - 2026-08-09
 
 ### Fixed

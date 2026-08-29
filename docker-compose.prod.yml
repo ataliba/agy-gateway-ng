@@ -1,6 +1,6 @@
 services:
   agy-gateway:
-    image: cybernetus/agy-gateway-ng:0.5.2
+    image: cybernetus/agy-gateway-ng:0.6.1
     container_name: agy-gateway
     ports:
       - "8000:8000"
@@ -14,6 +14,7 @@ services:
       AGY_TIMEOUT: ${AGY_TIMEOUT:-300}
       AGY_MAX_CONCURRENT: ${AGY_MAX_CONCURRENT:-1}
       AGY_API_KEY: ${AGY_API_KEY:-}
+      AGY_SKIP_PERMISSIONS: ${AGY_SKIP_PERMISSIONS:-false}
       # caminho DENTRO do container — sempre fixo, não vem de fora.
       BRAIN_DIR: /root/.gemini/antigravity-cli/brain
     volumes:

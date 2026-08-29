@@ -3,6 +3,7 @@ import time
 import uuid
 import json
 import asyncio
+import logging
 import os
 from dataclasses import dataclass, field
 
@@ -23,6 +24,8 @@ API_KEY = os.getenv("AGY_API_KEY", "").strip()
 SKIP_PERMISSIONS = os.getenv("AGY_SKIP_PERMISSIONS", "false").lower() == "true"
 
 ANSI = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+logger = logging.getLogger("agy-gateway")
 
 # agy trava o banco local (brain dir) por processo — serializa execuções pra evitar
 # corrida entre requests concorrentes disputando a mesma trava.
@@ -118,7 +121,7 @@ def _load_registry() -> dict:
 
 MODEL_REGISTRY = _load_registry()
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 app = FastAPI(title="agy-gateway", version=__version__)
 
@@ -185,13 +188,26 @@ async def _finalize_sync(
     if proc.returncode != 0:
         raise HTTPException(500, _strip_ansi(stderr).strip() or "agy falhou sem stderr")
 
+    stripped = output.strip()
+    if not stripped:
+        # agy saiu limpo (returncode 0) mas sem imprimir nada — visto sob uso alto,
+        # provável rate-limit/quota do modelo engolido silenciosamente pelo agy.
+        # Não devolver 200 com content vazio (cliente só reporta "empty response"
+        # sem pista nenhuma) — melhor falhar alto e logar o stderr pra investigar.
+        logger.warning(
+            "agy saiu com output vazio (returncode 0). stderr=%r", _strip_ansi(stderr).strip()
+        )
+        raise HTTPException(
+            502, "agy retornou resposta vazia (possível rate-limit/quota do modelo)"
+        )
+
     new_conversation_id = None
     if conversation_id is None:
         new_ids = _list_conversation_ids() - known_ids
         if new_ids:
             new_conversation_id = next(iter(new_ids))
 
-    return {"status": "ok", "output": output.strip(), "new_conversation_id": new_conversation_id}
+    return {"status": "ok", "output": stripped, "new_conversation_id": new_conversation_id}
 
 
 async def _run_agy(
@@ -382,6 +398,18 @@ async def _stream_chat_completion(
     if proc.returncode != 0:
         err = _strip_ansi(stderr).strip() or "agy falhou sem stderr"
         yield _sse({"content": f"\n[erro] {err}"}, finish_reason="stop")
+        yield "data: [DONE]\n\n"
+        return
+
+    if not output_so_far.strip():
+        logger.warning(
+            "agy (stream) saiu com output vazio (returncode 0). stderr=%r",
+            _strip_ansi(stderr).strip(),
+        )
+        yield _sse(
+            {"content": "[erro] agy retornou resposta vazia (possível rate-limit/quota do modelo)"},
+            finish_reason="stop",
+        )
         yield "data: [DONE]\n\n"
         return
 
