@@ -5,6 +5,7 @@ import json
 import asyncio
 import logging
 import os
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import yaml
@@ -20,6 +21,7 @@ BRAIN_DIR = os.getenv(
     "BRAIN_DIR", os.path.join(os.path.expanduser("~"), ".gemini", "antigravity-cli", "brain")
 )
 AGY_MAX_CONCURRENT = int(os.getenv("AGY_MAX_CONCURRENT", "1"))
+AGY_MAX_USERS = int(os.getenv("AGY_MAX_USERS", "1000"))
 API_KEY = os.getenv("AGY_API_KEY", "").strip()
 SKIP_PERMISSIONS = os.getenv("AGY_SKIP_PERMISSIONS", "false").lower() == "true"
 
@@ -33,7 +35,24 @@ _agy_semaphore = asyncio.Semaphore(AGY_MAX_CONCURRENT)
 
 # mapeia identificador de usuário (campo "user" do request) -> conversation_id do agy,
 # assim cada cliente segue a própria conversa em vez de todos brigarem pela última (--continue).
-_user_conversations: dict[str, str] = {}
+# OrderedDict com LRU limitado a AGY_MAX_USERS — sem isso, um cliente que manda um "user"
+# diferente a cada request (ex: UUID por sessão) cresce esse dict pra sempre, já que nada
+# aqui expira (processo fica de pé por dias, ver AGY_TIMEOUT que é só timeout de processo).
+_user_conversations: "OrderedDict[str, str]" = OrderedDict()
+
+
+def _get_user_conversation(user: str) -> str | None:
+    conversation_id = _user_conversations.get(user)
+    if conversation_id is not None:
+        _user_conversations.move_to_end(user)
+    return conversation_id
+
+
+def _set_user_conversation(user: str, conversation_id: str) -> None:
+    _user_conversations[user] = conversation_id
+    _user_conversations.move_to_end(user)
+    while len(_user_conversations) > AGY_MAX_USERS:
+        _user_conversations.popitem(last=False)
 
 # heurística pra detectar quando o agy tá parado esperando aprovação y/n no stdin —
 # mesmo padrão usado pelo bridge Telegram irmão deste projeto (agy-gateway/src/agy-wrapper.js)
@@ -121,7 +140,7 @@ def _load_registry() -> dict:
 
 MODEL_REGISTRY = _load_registry()
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 app = FastAPI(title="agy-gateway", version=__version__)
 
@@ -181,9 +200,17 @@ async def _drain_until_prompt_or_exit(
 async def _finalize_sync(
     proc: asyncio.subprocess.Process, output: str, conversation_id: str | None, known_ids: set[str]
 ) -> dict:
-    stderr = (await proc.stderr.read()).decode()
-    await proc.wait()
-    _agy_semaphore.release()
+    try:
+        stderr = (await proc.stderr.read()).decode()
+        await proc.wait()
+    finally:
+        # finally (não só except) porque cancelamento aqui (CancelledError, ex:
+        # cliente derrubou a conexão) não pode deixar o processo órfão nem vazar
+        # o semáforo — AGY_MAX_CONCURRENT default é 1, um vazamento trava tudo.
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        _agy_semaphore.release()
 
     if proc.returncode != 0:
         raise HTTPException(500, _strip_ansi(stderr).strip() or "agy falhou sem stderr")
@@ -242,9 +269,11 @@ async def _run_agy(
         raise HTTPException(
             504, f"agy excedeu timeout de {PRINT_TIMEOUT}s (comando: {' '.join(args)})"
         ) from exc
-    except Exception:
-        # qualquer falha aqui (ex: agy sumiu do PATH, pipe quebrado) não pode
-        # vazar o semáforo — senão toda request futura trava pra sempre.
+    except BaseException:
+        # BaseException (não só Exception) de propósito: cancelamento do request
+        # (asyncio.CancelledError, ex: cliente derrubou a conexão) NÃO é subclasse
+        # de Exception e escapava sem liberar o semáforo — travava toda request
+        # futura pra sempre (AGY_MAX_CONCURRENT default é 1).
         if proc is not None:
             proc.kill()
             await proc.wait()
@@ -272,8 +301,10 @@ async def _resume_sync(pending: PendingApproval, approved: bool) -> dict:
         await proc.wait()
         _agy_semaphore.release()
         raise HTTPException(504, f"agy excedeu timeout de {PRINT_TIMEOUT}s") from exc
-    except Exception:
-        # stdin quebrado (processo já morreu) não pode vazar o semáforo.
+    except BaseException:
+        # BaseException de propósito (mesma razão de _run_agy): cancelamento não
+        # é Exception e vazava o semáforo. Cobre também stdin quebrado (processo
+        # já morreu).
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
@@ -300,9 +331,13 @@ async def list_models():
     }
 
 
+# pylint: disable-next=too-many-branches
 async def _stream_chat_completion(
     req: ChatRequest, real_model: str, prompt: str, conversation_id: str | None
 ):
+    # branches extras são os handlers de cleanup (kill/release do semáforo) que
+    # cobrem cancelamento de conexão em cada ponto de yield — ver comentário no
+    # `except BaseException` mais abaixo.
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
 
@@ -327,6 +362,8 @@ async def _stream_chat_completion(
     output_so_far = ""
     tail = ""
     proc = None
+    approval_id_pending = None  # setado enquanto há PendingApproval vivo pra este proc
+    semaphore_released = False
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -347,6 +384,7 @@ async def _stream_chat_completion(
                 approval_id = _register_pending(
                     proc, cmd, conversation_id, known_ids, output_so_far, "stream", req.user, req.model
                 )
+                approval_id_pending = approval_id
                 pending = _pending_approvals[approval_id]
                 yield _sse(
                     {"content": None},
@@ -355,10 +393,12 @@ async def _stream_chat_completion(
                 try:
                     await asyncio.wait_for(pending.decision_event.wait(), timeout=PRINT_TIMEOUT)
                 except asyncio.TimeoutError:
+                    _pending_approvals.pop(approval_id, None)
+                    approval_id_pending = None
                     proc.kill()
                     await proc.wait()
                     _agy_semaphore.release()
-                    _pending_approvals.pop(approval_id, None)
+                    semaphore_released = True
                     yield _sse(
                         {"content": "\n[erro] tempo esgotado esperando aprovação"}, finish_reason="stop"
                     )
@@ -366,6 +406,7 @@ async def _stream_chat_completion(
                     return
 
                 _pending_approvals.pop(approval_id, None)
+                approval_id_pending = None
                 proc.stdin.write(b"y\n" if pending.decision else b"n\n")
                 await proc.stdin.drain()
                 tail = ""  # evita redetectar o mesmo prompt já respondido
@@ -373,53 +414,79 @@ async def _stream_chat_completion(
 
             if text:
                 yield _sse({"content": text})
-    except asyncio.TimeoutError:
-        proc.kill()
+
+        stderr = (await proc.stderr.read()).decode()
         await proc.wait()
         _agy_semaphore.release()
+        semaphore_released = True
+
+        if proc.returncode != 0:
+            err = _strip_ansi(stderr).strip() or "agy falhou sem stderr"
+            yield _sse({"content": f"\n[erro] {err}"}, finish_reason="stop")
+            yield "data: [DONE]\n\n"
+            return
+
+        if not output_so_far.strip():
+            logger.warning(
+                "agy (stream) saiu com output vazio (returncode 0). stderr=%r",
+                _strip_ansi(stderr).strip(),
+            )
+            yield _sse(
+                {"content": "[erro] agy retornou resposta vazia (possível rate-limit/quota do modelo)"},
+                finish_reason="stop",
+            )
+            yield "data: [DONE]\n\n"
+            return
+
+        if conversation_id is None and req.user:
+            new_ids = _list_conversation_ids() - known_ids
+            if new_ids:
+                _set_user_conversation(req.user, new_ids.pop())
+
+        yield _sse({}, finish_reason="stop")
+        yield "data: [DONE]\n\n"
+    except asyncio.TimeoutError:
+        if not semaphore_released:
+            proc.kill()
+            await proc.wait()
+            _agy_semaphore.release()
+            semaphore_released = True
         yield _sse({"content": f"\n[erro] agy excedeu timeout de {PRINT_TIMEOUT}s"}, finish_reason="stop")
         yield "data: [DONE]\n\n"
         return
     except Exception as exc:
         # qualquer falha aqui (pipe quebrado, agy sumiu, etc) não pode vazar
         # o semáforo — senão todo POST /v1/chat/completions futuro trava.
-        if proc is not None:
-            proc.kill()
-            await proc.wait()
-        _agy_semaphore.release()
+        if approval_id_pending is not None:
+            _pending_approvals.pop(approval_id_pending, None)
+        if not semaphore_released:
+            if proc is not None:
+                proc.kill()
+                await proc.wait()
+            _agy_semaphore.release()
+            semaphore_released = True
         yield _sse({"content": f"\n[erro] {exc}"}, finish_reason="stop")
         yield "data: [DONE]\n\n"
         return
-
-    stderr = (await proc.stderr.read()).decode()
-    await proc.wait()
-    _agy_semaphore.release()
-
-    if proc.returncode != 0:
-        err = _strip_ansi(stderr).strip() or "agy falhou sem stderr"
-        yield _sse({"content": f"\n[erro] {err}"}, finish_reason="stop")
-        yield "data: [DONE]\n\n"
-        return
-
-    if not output_so_far.strip():
-        logger.warning(
-            "agy (stream) saiu com output vazio (returncode 0). stderr=%r",
-            _strip_ansi(stderr).strip(),
-        )
-        yield _sse(
-            {"content": "[erro] agy retornou resposta vazia (possível rate-limit/quota do modelo)"},
-            finish_reason="stop",
-        )
-        yield "data: [DONE]\n\n"
-        return
-
-    if conversation_id is None and req.user:
-        new_ids = _list_conversation_ids() - known_ids
-        if new_ids:
-            _user_conversations[req.user] = next(iter(new_ids), None)
-
-    yield _sse({}, finish_reason="stop")
-    yield "data: [DONE]\n\n"
+    except BaseException:
+        # BaseException de propósito, não Exception: quando o cliente derruba a
+        # conexão no meio do stream, o Starlette fecha este generator jogando
+        # GeneratorExit (ou CancelledError) no ponto do último `yield` — nenhum
+        # dos dois é subclasse de Exception, então escapava dos handlers acima
+        # sem nunca matar o processo agy nem liberar o semáforo. Como
+        # AGY_MAX_CONCURRENT default é 1, um único disconnect nesse ponto travava
+        # toda request futura pra sempre (era isto o "gateway parou de responder
+        # depois de uns dias"). Aqui só limpa e repropaga — nunca faz yield,
+        # porque yield dentro de um handler de GeneratorExit é erro em runtime.
+        if approval_id_pending is not None:
+            _pending_approvals.pop(approval_id_pending, None)
+        if not semaphore_released:
+            if proc is not None:
+                proc.kill()
+                await proc.wait()
+            _agy_semaphore.release()
+            semaphore_released = True
+        raise
 
 
 @app.post("/v1/chat/completions", dependencies=[Depends(_require_api_key)])
@@ -436,7 +503,7 @@ async def chat_completions(req: ChatRequest):
         raise HTTPException(400, "messages não pode estar vazio")
 
     prompt = req.messages[-1].content
-    conversation_id = _user_conversations.get(req.user) if req.user else None
+    conversation_id = _get_user_conversation(req.user) if req.user else None
 
     if req.stream:
         return StreamingResponse(
@@ -471,7 +538,7 @@ def _chat_response_or_pending(model: str, user: str | None, result: dict):
         })
 
     if user and result["new_conversation_id"]:
-        _user_conversations[user] = result["new_conversation_id"]
+        _set_user_conversation(user, result["new_conversation_id"])
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",

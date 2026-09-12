@@ -2,6 +2,28 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [0.6.2] - 2026-09-12
+
+### Fixed
+
+- Vazamento de semáforo/processo quando cliente derrubava a conexão no meio
+  duma request (streaming ou aprovação pendente). O Starlette encerra o
+  generator jogando `GeneratorExit`/`CancelledError` no ponto do último
+  `yield` — nenhum dos dois é subclasse de `Exception`, então escapava dos
+  `except Exception` existentes sem matar o processo `agy` nem liberar
+  `_agy_semaphore`. Como `AGY_MAX_CONCURRENT` default é `1`, um único
+  disconnect nesse ponto travava toda request futura pra sempre (gateway
+  "parava de responder" depois de alguns dias de uso). Trocado por
+  `except BaseException` nos pontos certos + `finally` em `_finalize_sync`
+  (`main.py`: `_run_agy`, `_resume_sync`, `_finalize_sync`,
+  `_stream_chat_completion`). Também corrigido: entrada de
+  `_pending_approvals` (modo stream) que ficava órfã pra sempre no mesmo
+  cenário.
+- `_user_conversations` (mapa `user → conversation_id`) crescia sem limite —
+  um cliente que manda `user` diferente a cada request (ex: UUID por sessão)
+  vazava memória lentamente ao longo de dias. Virou `OrderedDict` com LRU
+  limitado por `AGY_MAX_USERS` (default `1000`).
+
 ## [0.6.1] - 2026-08-29
 
 ### Fixed

@@ -35,6 +35,9 @@ HTTP). A heurística de detecção de pedido de permissão aqui foi portada de l
    conversa global do agy — várias chamadas sem `user` disputam a mesma conversa).
    Com `user`, o gateway mapeia `user → conversation_id` em `_user_conversations`
    (em memória, some ao reiniciar) e passa `--conversation <id>` pro agy.
+   `_user_conversations` é um `OrderedDict` com LRU limitado a `AGY_MAX_USERS`
+   (evicção do mais antigo) — sem isso um cliente que manda `user` diferente a
+   cada request cresce o dict pra sempre, já que nada aqui expira sozinho.
 3. **Detecção de novo `conversation_id`** é feita comparando o conteúdo do
    `BRAIN_DIR` antes/depois do processo rodar (`_list_conversation_ids`), não por
    parsing de stdout. Se o agy mudar onde grava conversas, isso quebra.
@@ -73,6 +76,7 @@ Quando o agy pede aprovação no meio da execução, o gateway não trava a requ
 | `AGY_TIMEOUT` | `300` | timeout de processo parado E timeout de espera por aprovação |
 | `BRAIN_DIR` | `~/.gemini/antigravity-cli/brain` | onde o agy guarda conversas |
 | `AGY_MAX_CONCURRENT` | `1` | tamanho do semáforo — manter em 1 a menos que confirme que o agy aguenta concorrência |
+| `AGY_MAX_USERS` | `1000` | limite (LRU) de entradas em `_user_conversations` (`user → conversation_id`) — sem isso o dict cresce sem fim se clientes mandam `user` diferente a cada request |
 | `AGY_API_KEY` | (vazio) | se setado, exige `Authorization: Bearer <valor>` em `/v1/*` (exceto `/health`) |
 | `AGY_SKIP_PERMISSIONS` | `false` | se `true`, passa `--dangerously-skip-permissions` pro agy — pula o fluxo de aprovação (item 4) inteiro, sem depender da heurística de detecção de prompt |
 
