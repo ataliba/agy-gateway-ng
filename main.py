@@ -28,6 +28,12 @@ SKIP_PERMISSIONS = os.getenv("AGY_SKIP_PERMISSIONS", "false").lower() == "true"
 ANSI = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 logger = logging.getLogger("agy-gateway")
+_LOG_LEVEL = os.getenv("AGY_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=_LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger.setLevel(_LOG_LEVEL)
 
 # agy trava o banco local (brain dir) por processo — serializa execuções pra evitar
 # corrida entre requests concorrentes disputando a mesma trava.
@@ -107,6 +113,10 @@ async def _expire_pending(approval_id: str) -> None:
     pending = _pending_approvals.pop(approval_id, None)
     if pending is None or pending.decision_event.is_set():
         return
+    logger.warning(
+        "approval_id=%s expirou sem resposta (pid=%s, user=%s), matando processo órfão",
+        approval_id, pending.proc.pid, pending.user,
+    )
     pending.proc.kill()
     await pending.proc.wait()
     _agy_semaphore.release()
@@ -140,7 +150,7 @@ def _load_registry() -> dict:
 
 MODEL_REGISTRY = _load_registry()
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 app = FastAPI(title="agy-gateway", version=__version__)
 
@@ -198,7 +208,8 @@ async def _drain_until_prompt_or_exit(
 
 
 async def _finalize_sync(
-    proc: asyncio.subprocess.Process, output: str, conversation_id: str | None, known_ids: set[str]
+    proc: asyncio.subprocess.Process, output: str, conversation_id: str | None, known_ids: set[str],
+    rid: str = "-",
 ) -> dict:
     try:
         stderr = (await proc.stderr.read()).decode()
@@ -208,9 +219,16 @@ async def _finalize_sync(
         # cliente derrubou a conexão) não pode deixar o processo órfão nem vazar
         # o semáforo — AGY_MAX_CONCURRENT default é 1, um vazamento trava tudo.
         if proc.returncode is None:
+            logger.warning("[%s] pid=%s ainda vivo no finally, matando", rid, proc.pid)
             proc.kill()
             await proc.wait()
         _agy_semaphore.release()
+        logger.debug("[%s] semáforo liberado (finalize_sync)", rid)
+
+    logger.info(
+        "[%s] pid=%s saiu returncode=%s output_len=%d stderr_len=%d",
+        rid, proc.pid, proc.returncode, len(output), len(stderr),
+    )
 
     if proc.returncode != 0:
         raise HTTPException(500, _strip_ansi(stderr).strip() or "agy falhou sem stderr")
@@ -222,7 +240,7 @@ async def _finalize_sync(
         # Não devolver 200 com content vazio (cliente só reporta "empty response"
         # sem pista nenhuma) — melhor falhar alto e logar o stderr pra investigar.
         logger.warning(
-            "agy saiu com output vazio (returncode 0). stderr=%r", _strip_ansi(stderr).strip()
+            "[%s] agy saiu com output vazio (returncode 0). stderr=%r", rid, _strip_ansi(stderr).strip()
         )
         raise HTTPException(
             502, "agy retornou resposta vazia (possível rate-limit/quota do modelo)"
@@ -243,6 +261,7 @@ async def _run_agy(
     conversation_id: str | None = None,
     user: str | None = None,
     model_name: str | None = None,
+    rid: str = "-",
 ) -> dict:
     """Roda agy uma vez. Retorna:
       {"status": "ok", "output": str, "new_conversation_id": str|None}
@@ -252,7 +271,12 @@ async def _run_agy(
     args = _build_args(prompt, real_model, conversation_id)
     known_ids = _list_conversation_ids() if conversation_id is None else set()
 
+    logger.debug("[%s] aguardando semáforo args=%s", rid, args[:-1])  # não loga o prompt (args[-1])
+    wait_start = time.monotonic()
     await _agy_semaphore.acquire()
+    wait_s = time.monotonic() - wait_start
+    if wait_s > 1:
+        logger.info("[%s] esperou %.1fs pelo semáforo", rid, wait_s)
     proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -261,8 +285,20 @@ async def _run_agy(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        logger.info(
+            "[%s] pid=%s spawnado model=%s conversation_id=%s", rid, proc.pid, real_model, conversation_id
+        )
+        run_start = time.monotonic()
         output, cmd = await _drain_until_prompt_or_exit(proc, "")
+        logger.debug(
+            "[%s] pid=%s drain terminou em %.1fs (permissão=%s)",
+            rid, proc.pid, time.monotonic() - run_start, bool(cmd),
+        )
     except asyncio.TimeoutError as exc:
+        logger.warning(
+            "[%s] pid=%s TIMEOUT após %ds sem output novo, matando processo",
+            rid, proc.pid if proc else None, PRINT_TIMEOUT,
+        )
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
@@ -274,6 +310,10 @@ async def _run_agy(
         # (asyncio.CancelledError, ex: cliente derrubou a conexão) NÃO é subclasse
         # de Exception e escapava sem liberar o semáforo — travava toda request
         # futura pra sempre (AGY_MAX_CONCURRENT default é 1).
+        logger.warning(
+            "[%s] pid=%s exceção/cancelamento durante spawn ou drain, limpando",
+            rid, proc.pid if proc else None, exc_info=True,
+        )
         if proc is not None:
             proc.kill()
             await proc.wait()
@@ -284,19 +324,22 @@ async def _run_agy(
         approval_id = _register_pending(
             proc, cmd, conversation_id, known_ids, output, "sync", user, model_name
         )
+        logger.info("[%s] pid=%s pediu permissão: %r (approval_id=%s)", rid, proc.pid, cmd, approval_id)
         return {"status": "permission_required", "approval_id": approval_id, "command": cmd}
 
-    return await _finalize_sync(proc, output, conversation_id, known_ids)
+    return await _finalize_sync(proc, output, conversation_id, known_ids, rid)
 
 
-async def _resume_sync(pending: PendingApproval, approved: bool) -> dict:
+async def _resume_sync(pending: PendingApproval, approved: bool, rid: str = "-") -> dict:
     """Continua um processo agy sync depois que /v1/approvals/{id} decidiu."""
     proc = pending.proc
+    logger.info("[%s] pid=%s retomando após decisão approved=%s", rid, proc.pid, approved)
     try:
         proc.stdin.write(b"y\n" if approved else b"n\n")
         await proc.stdin.drain()
         output, cmd = await _drain_until_prompt_or_exit(proc, pending.output_so_far)
     except asyncio.TimeoutError as exc:
+        logger.warning("[%s] pid=%s TIMEOUT após retomar aprovação, matando processo", rid, proc.pid)
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
@@ -305,6 +348,9 @@ async def _resume_sync(pending: PendingApproval, approved: bool) -> dict:
         # BaseException de propósito (mesma razão de _run_agy): cancelamento não
         # é Exception e vazava o semáforo. Cobre também stdin quebrado (processo
         # já morreu).
+        logger.warning(
+            "[%s] pid=%s exceção/cancelamento ao retomar aprovação, limpando", rid, proc.pid, exc_info=True
+        )
         proc.kill()
         await proc.wait()
         _agy_semaphore.release()
@@ -315,9 +361,10 @@ async def _resume_sync(pending: PendingApproval, approved: bool) -> dict:
             proc, cmd, pending.conversation_id, pending.known_ids, output,
             "sync", pending.user, pending.model_name,
         )
+        logger.info("[%s] pid=%s pediu 2a permissão: %r (approval_id=%s)", rid, proc.pid, cmd, approval_id)
         return {"status": "permission_required", "approval_id": approval_id, "command": cmd}
 
-    return await _finalize_sync(proc, output, pending.conversation_id, pending.known_ids)
+    return await _finalize_sync(proc, output, pending.conversation_id, pending.known_ids, rid)
 
 
 @app.get("/v1/models", dependencies=[Depends(_require_api_key)])
@@ -333,13 +380,14 @@ async def list_models():
 
 # pylint: disable-next=too-many-branches
 async def _stream_chat_completion(
-    req: ChatRequest, real_model: str, prompt: str, conversation_id: str | None
+    req: ChatRequest, real_model: str, prompt: str, conversation_id: str | None, rid: str = "-"
 ):
     # branches extras são os handlers de cleanup (kill/release do semáforo) que
     # cobrem cancelamento de conexão em cada ponto de yield — ver comentário no
     # `except BaseException` mais abaixo.
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
+    stream_start = time.monotonic()
 
     def _sse(delta: dict, finish_reason: str | None = None, extra: dict | None = None) -> str:
         payload = {
@@ -370,6 +418,10 @@ async def _stream_chat_completion(
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+        )
+        logger.info(
+            "[%s] pid=%s spawnado (stream) model=%s conversation_id=%s",
+            rid, proc.pid, real_model, conversation_id,
         )
         while True:
             chunk = await asyncio.wait_for(proc.stdout.read(1024), timeout=PRINT_TIMEOUT)
@@ -419,6 +471,10 @@ async def _stream_chat_completion(
         await proc.wait()
         _agy_semaphore.release()
         semaphore_released = True
+        logger.info(
+            "[%s] pid=%s (stream) saiu returncode=%s output_len=%d elapsed=%.1fs",
+            rid, proc.pid, proc.returncode, len(output_so_far), time.monotonic() - stream_start,
+        )
 
         if proc.returncode != 0:
             err = _strip_ansi(stderr).strip() or "agy falhou sem stderr"
@@ -428,8 +484,8 @@ async def _stream_chat_completion(
 
         if not output_so_far.strip():
             logger.warning(
-                "agy (stream) saiu com output vazio (returncode 0). stderr=%r",
-                _strip_ansi(stderr).strip(),
+                "[%s] agy (stream) saiu com output vazio (returncode 0). stderr=%r",
+                rid, _strip_ansi(stderr).strip(),
             )
             yield _sse(
                 {"content": "[erro] agy retornou resposta vazia (possível rate-limit/quota do modelo)"},
@@ -446,6 +502,10 @@ async def _stream_chat_completion(
         yield _sse({}, finish_reason="stop")
         yield "data: [DONE]\n\n"
     except asyncio.TimeoutError:
+        logger.warning(
+            "[%s] pid=%s (stream) TIMEOUT após %ds sem output novo, matando processo",
+            rid, proc.pid if proc else None, PRINT_TIMEOUT,
+        )
         if not semaphore_released:
             proc.kill()
             await proc.wait()
@@ -457,6 +517,9 @@ async def _stream_chat_completion(
     except Exception as exc:
         # qualquer falha aqui (pipe quebrado, agy sumiu, etc) não pode vazar
         # o semáforo — senão todo POST /v1/chat/completions futuro trava.
+        logger.warning(
+            "[%s] pid=%s (stream) exceção: %s", rid, proc.pid if proc else None, exc, exc_info=True
+        )
         if approval_id_pending is not None:
             _pending_approvals.pop(approval_id_pending, None)
         if not semaphore_released:
@@ -478,6 +541,10 @@ async def _stream_chat_completion(
         # toda request futura pra sempre (era isto o "gateway parou de responder
         # depois de uns dias"). Aqui só limpa e repropaga — nunca faz yield,
         # porque yield dentro de um handler de GeneratorExit é erro em runtime.
+        logger.warning(
+            "[%s] pid=%s (stream) generator encerrado (cliente desconectou?) elapsed=%.1fs output_len=%d",
+            rid, proc.pid if proc else None, time.monotonic() - stream_start, len(output_so_far),
+        )
         if approval_id_pending is not None:
             _pending_approvals.pop(approval_id_pending, None)
         if not semaphore_released:
@@ -491,8 +558,15 @@ async def _stream_chat_completion(
 
 @app.post("/v1/chat/completions", dependencies=[Depends(_require_api_key)])
 async def chat_completions(req: ChatRequest):
+    rid = uuid.uuid4().hex[:8]
+    req_start = time.monotonic()
+    logger.info(
+        "[%s] entrada model=%s user=%s stream=%s prompt_len=%d",
+        rid, req.model, req.user, bool(req.stream), len(req.messages[-1].content) if req.messages else 0,
+    )
     config = MODEL_REGISTRY.get(req.model)
     if not config:
+        logger.warning("[%s] modelo '%s' não configurado", rid, req.model)
         raise HTTPException(
             400,
             f"Modelo '{req.model}' não configurado no gateway. "
@@ -507,7 +581,7 @@ async def chat_completions(req: ChatRequest):
 
     if req.stream:
         return StreamingResponse(
-            _stream_chat_completion(req, config["model"], prompt, conversation_id),
+            _stream_chat_completion(req, config["model"], prompt, conversation_id, rid),
             media_type="text/event-stream",
         )
 
@@ -517,6 +591,10 @@ async def chat_completions(req: ChatRequest):
         conversation_id=conversation_id,
         user=req.user,
         model_name=req.model,
+        rid=rid,
+    )
+    logger.info(
+        "[%s] saída status=%s elapsed=%.1fs", rid, result["status"], time.monotonic() - req_start,
     )
     return _chat_response_or_pending(req.model, req.user, result)
 
@@ -556,8 +634,11 @@ def _chat_response_or_pending(model: str, user: str | None, result: dict):
 
 @app.post("/v1/approvals/{approval_id}", dependencies=[Depends(_require_api_key)])
 async def approve(approval_id: str, body: ApprovalRequest):
+    rid = uuid.uuid4().hex[:8]
+    logger.info("[%s] POST /v1/approvals/%s approved=%s", rid, approval_id, body.approved)
     pending = _pending_approvals.pop(approval_id, None)
     if pending is None:
+        logger.warning("[%s] approval_id=%s não encontrado, já respondido ou expirado", rid, approval_id)
         raise HTTPException(404, "approval_id não encontrado, já respondido ou expirado")
 
     pending.decision = body.approved
@@ -569,7 +650,7 @@ async def approve(approval_id: str, body: ApprovalRequest):
             "note": "resposta registrada — acompanhe o stream original de /v1/chat/completions",
         }
 
-    result = await _resume_sync(pending, body.approved)
+    result = await _resume_sync(pending, body.approved, rid)
     return _chat_response_or_pending(pending.model_name, pending.user, result)
 
 
