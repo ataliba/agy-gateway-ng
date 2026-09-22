@@ -2,6 +2,13 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [0.6.5] - 2026-09-22
+
+### Changed
+
+- `models.yaml`: adicionados `agy-gemini-3.7-flash-*` e `agy-gemini-3.8-flash-*`;
+  removidos `agy-gemini-3.5-flash-*` (não aparecem mais em `agy models`).
+
 ## [0.6.2] - 2026-09-12
 
 ### Fixed

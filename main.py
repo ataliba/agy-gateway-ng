@@ -150,7 +150,7 @@ def _load_registry() -> dict:
 
 MODEL_REGISTRY = _load_registry()
 
-__version__ = "0.6.4"
+__version__ = "0.6.5"
 
 app = FastAPI(title="agy-gateway", version=__version__)
 

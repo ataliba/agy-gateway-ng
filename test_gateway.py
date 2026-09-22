@@ -5,7 +5,7 @@ import main
 from main import _build_args, _require_api_key, _detect_permission_prompt
 
 def test_print_flag_always_present():
-    args = _build_args("oi", "gemini-3.5-flash-low")
+    args = _build_args("oi", "gemini-3.8-flash-low")
     assert "-p" in args
 
 def test_model_flag_uses_real_name():
@@ -15,23 +15,23 @@ def test_model_flag_uses_real_name():
     assert args[idx + 1] == "claude-sonnet-4-6"
 
 def test_conversation_id_uses_conversation_flag_not_continue():
-    args = _build_args("oi", "gemini-3.5-flash-low", conversation_id="abc-123")
+    args = _build_args("oi", "gemini-3.8-flash-low", conversation_id="abc-123")
     idx = args.index("--conversation")
     assert args[idx + 1] == "abc-123"
     assert "--continue" not in args
 
 def test_no_conversation_id_falls_back_to_continue():
-    args = _build_args("oi", "gemini-3.5-flash-low")
+    args = _build_args("oi", "gemini-3.8-flash-low")
     assert "--continue" in args
     assert "--conversation" not in args
 
 def test_skip_permissions_off_by_default():
-    args = _build_args("oi", "gemini-3.5-flash-low")
+    args = _build_args("oi", "gemini-3.8-flash-low")
     assert "--dangerously-skip-permissions" not in args
 
 def test_skip_permissions_flag_added_when_enabled(monkeypatch):
     monkeypatch.setattr(main, "SKIP_PERMISSIONS", True)
-    args = _build_args("oi", "gemini-3.5-flash-low")
+    args = _build_args("oi", "gemini-3.8-flash-low")
     assert "--dangerously-skip-permissions" in args
 
 @pytest.mark.asyncio
