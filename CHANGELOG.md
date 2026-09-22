@@ -9,6 +9,34 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - `models.yaml`: adicionados `agy-gemini-3.7-flash-*` e `agy-gemini-3.8-flash-*`;
   removidos `agy-gemini-3.5-flash-*` (não aparecem mais em `agy models`).
 
+## [0.6.4] - 2026-09-22
+
+### Fixed
+
+- Semáforo `_agy_semaphore` não era liberado quando o client disconnect
+  cancelava a task uma segunda vez durante o `await proc.wait()` da limpeza,
+  pulando o `release()` logo em seguida. Com `AGY_MAX_CONCURRENT=1` isso
+  travava toda request futura sem nunca spawnar o `agy` (visto em produção:
+  requests seguidas sem log de "spawnado"). `release()` agora fica dentro de
+  `finally` aninhado nos 5 pontos de cleanup (stream e sync), garantindo
+  liberação mesmo sob cancelamento repetido.
+
+## [0.6.3] - 2026-09-16
+
+### Added
+
+- Log de debug detalhado pra rastrear casos de gateway travado/mudo sob uso
+  prolongado. `AGY_LOG_LEVEL` (env, default `INFO`) controla o nível — `DEBUG`
+  loga espera de semáforo e args de cada spawn. Todo request ganha um `rid`
+  (id curto) propagado por toda a cadeia (spawn, drain, timeout, aprovação,
+  disconnect), permitindo isolar um request específico no log. Cobre: entrada
+  e saída de cada request (model/user/stream/prompt_len/elapsed), spawn do
+  processo `agy` (pid/model/conversation_id), espera >1s pelo semáforo,
+  returncode/output_len/stderr_len na saída, timeout (mata processo órfão),
+  exceção/cancelamento no meio do fluxo, pedido de permissão
+  (comando/approval_id), expiração de approval sem resposta, e disconnect do
+  cliente no meio de um stream.
+
 ## [0.6.2] - 2026-09-12
 
 ### Fixed
