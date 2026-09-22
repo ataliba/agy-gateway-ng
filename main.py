@@ -150,7 +150,7 @@ def _load_registry() -> dict:
 
 MODEL_REGISTRY = _load_registry()
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"
 
 app = FastAPI(title="agy-gateway", version=__version__)
 
@@ -218,12 +218,16 @@ async def _finalize_sync(
         # finally (não só except) porque cancelamento aqui (CancelledError, ex:
         # cliente derrubou a conexão) não pode deixar o processo órfão nem vazar
         # o semáforo — AGY_MAX_CONCURRENT default é 1, um vazamento trava tudo.
-        if proc.returncode is None:
-            logger.warning("[%s] pid=%s ainda vivo no finally, matando", rid, proc.pid)
-            proc.kill()
-            await proc.wait()
-        _agy_semaphore.release()
-        logger.debug("[%s] semáforo liberado (finalize_sync)", rid)
+        # release() em finally aninhado: se até o proc.wait() do kill for
+        # cancelado de novo (2º CancelledError), o semáforo ainda é liberado.
+        try:
+            if proc.returncode is None:
+                logger.warning("[%s] pid=%s ainda vivo no finally, matando", rid, proc.pid)
+                proc.kill()
+                await proc.wait()
+        finally:
+            _agy_semaphore.release()
+            logger.debug("[%s] semáforo liberado (finalize_sync)", rid)
 
     logger.info(
         "[%s] pid=%s saiu returncode=%s output_len=%d stderr_len=%d",
@@ -448,9 +452,11 @@ async def _stream_chat_completion(
                     _pending_approvals.pop(approval_id, None)
                     approval_id_pending = None
                     proc.kill()
-                    await proc.wait()
-                    _agy_semaphore.release()
-                    semaphore_released = True
+                    try:
+                        await proc.wait()
+                    finally:
+                        _agy_semaphore.release()
+                        semaphore_released = True
                     yield _sse(
                         {"content": "\n[erro] tempo esgotado esperando aprovação"}, finish_reason="stop"
                     )
@@ -508,9 +514,11 @@ async def _stream_chat_completion(
         )
         if not semaphore_released:
             proc.kill()
-            await proc.wait()
-            _agy_semaphore.release()
-            semaphore_released = True
+            try:
+                await proc.wait()
+            finally:
+                _agy_semaphore.release()
+                semaphore_released = True
         yield _sse({"content": f"\n[erro] agy excedeu timeout de {PRINT_TIMEOUT}s"}, finish_reason="stop")
         yield "data: [DONE]\n\n"
         return
@@ -523,11 +531,13 @@ async def _stream_chat_completion(
         if approval_id_pending is not None:
             _pending_approvals.pop(approval_id_pending, None)
         if not semaphore_released:
-            if proc is not None:
-                proc.kill()
-                await proc.wait()
-            _agy_semaphore.release()
-            semaphore_released = True
+            try:
+                if proc is not None:
+                    proc.kill()
+                    await proc.wait()
+            finally:
+                _agy_semaphore.release()
+                semaphore_released = True
         yield _sse({"content": f"\n[erro] {exc}"}, finish_reason="stop")
         yield "data: [DONE]\n\n"
         return
@@ -548,11 +558,19 @@ async def _stream_chat_completion(
         if approval_id_pending is not None:
             _pending_approvals.pop(approval_id_pending, None)
         if not semaphore_released:
-            if proc is not None:
-                proc.kill()
-                await proc.wait()
-            _agy_semaphore.release()
-            semaphore_released = True
+            # release() em finally: se até este await proc.wait() levar um 2º
+            # CancelledError (comum quando o disconnect cancela a task de novo
+            # durante a limpeza), o semáforo ainda assim é liberado — sem isso
+            # era exatamente o cenário observado em produção: um disconnect no
+            # meio do stream travava _agy_semaphore pra sempre (AGY_MAX_CONCURRENT=1)
+            # e toda request seguinte ficava presa em acquire() sem nunca spawnar.
+            try:
+                if proc is not None:
+                    proc.kill()
+                    await proc.wait()
+            finally:
+                _agy_semaphore.release()
+                semaphore_released = True
         raise
 
 
