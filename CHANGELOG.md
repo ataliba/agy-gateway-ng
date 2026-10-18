@@ -2,6 +2,14 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [0.6.6] - 2026-10-18
+
+### Changed
+
+- `models.yaml`: removidos `agy-gemini-3.7-flash-*`, `agy-gemini-3.6-flash-*` e
+  `agy-gemini-3.1-pro-*` — não aparecem mais em `agy models`, e o agy rejeitava
+  `--model` com `model ... is not recognized as a known model`.
+
 ## [0.6.5] - 2026-09-22
 
 ### Changed

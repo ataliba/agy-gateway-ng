@@ -4,22 +4,6 @@ agy-gemini-3.8-flash-medium:
   model: gemini-3.8-flash-medium
 agy-gemini-3.8-flash-low:
   model: gemini-3.8-flash-low
-agy-gemini-3.7-flash-high:
-  model: gemini-3.7-flash-high
-agy-gemini-3.7-flash-medium:
-  model: gemini-3.7-flash-medium
-agy-gemini-3.7-flash-low:
-  model: gemini-3.7-flash-low
-agy-gemini-3.6-flash-high:
-  model: gemini-3.6-flash-high
-agy-gemini-3.6-flash-medium:
-  model: gemini-3.6-flash-medium
-agy-gemini-3.6-flash-low:
-  model: gemini-3.6-flash-low
-agy-gemini-3.1-pro-high:
-  model: gemini-3.1-pro-high
-agy-gemini-3.1-pro-low:
-  model: gemini-3.1-pro-low
 agy-claude-sonnet-4-6:
   model: claude-sonnet-4-6
 agy-claude-opus-4-6-thinking:
