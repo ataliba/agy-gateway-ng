@@ -1,3 +1,11 @@
+agy-gemini-4-hydrogen-xhigh:
+  model: gemini-4-hydrogen-xhigh
+agy-gemini-4-hydrogen-high:
+  model: gemini-4-hydrogen-high
+agy-gemini-4-hydrogen-medium:
+  model: gemini-4-hydrogen-medium
+agy-gemini-4-hydrogen-low:
+  model: gemini-4-hydrogen-low
 agy-gemini-3.8-flash-high:
   model: gemini-3.8-flash-high
 agy-gemini-3.8-flash-medium:

@@ -2,6 +2,13 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [0.6.7] - 2026-11-25
+
+### Added
+
+- `models.yaml`: adicionados `agy-gemini-4-hydrogen-{xhigh,high,medium,low}`
+  (novos em `agy models`, CLI 1.5.16).
+
 ## [0.6.6] - 2026-10-18
 
 ### Changed
